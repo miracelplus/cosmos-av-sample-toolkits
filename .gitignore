@@ -2,3 +2,8 @@ waymo_demo_render_ftheta/
 waymo_demo_render_pinhole/
 waymo_demo/
 __pycache__/
+terasim_demo_render_ftheta/
+terasim_demo_render_pinhole/
+terasim_demo/
+streetview_image.jpg
+.env
