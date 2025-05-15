@@ -136,6 +136,35 @@ def convert_waymo_hdmap(output_root: Path, clip_id: str, dataset: tf.data.TFReco
         # only process the first frame
         break
 
+
+    # Plot all HDMap elements for visualization
+    import matplotlib.pyplot as plt
+    
+    plt.figure(figsize=(12, 8))
+    colors = ['r', 'g', 'b', 'c', 'm', 'y']
+    
+    for i, (hdmap_name, hdmap_data) in enumerate(hdmap_name_to_data.items()):
+        if len(hdmap_data) == 0:
+            continue
+            
+        color = colors[i % len(colors)]
+        for polyline in hdmap_data:
+            polyline = np.array(polyline)
+            plt.plot(polyline[:, 0], polyline[:, 1], color=color, alpha=0.5, label=hdmap_name)
+        
+    plt.title(f'HDMap Elements Visualization - {clip_id}')
+    plt.xlabel('X (meters)')
+    plt.ylabel('Y (meters)') 
+    plt.axis('equal')
+    plt.grid(True)
+    plt.legend()
+    
+    # Save plot
+    plt.savefig("waymo_hdmap.png")
+    plt.close()
+
+    
+
     # convert to cosmos's name convention for easier processing
     hdmap_name_to_cosmos = {
         'lane': 'lanes',
@@ -456,34 +485,37 @@ def convert_waymo_tfrecord_to_wds(
     convert_waymo_lidar(output_wds_path, clip_id, dataset)
 
 @click.command()
-@click.option("--waymo_tfrecord_root", "-i", type=str, help="Waymo tfrecord root")
-@click.option("--output_wds_path", "-o", type=str, help="Output wds path")
+@click.option("--waymo_tfrecord_root", "-i", type=str, help="Waymo tfrecord root", default="/home/mtl/waymo_open_dataset")
+@click.option("--output_wds_path", "-o", type=str, help="Output wds path", default="waymo_demo_new")
 @click.option("--num_workers", "-n", type=int, default=1, help="Number of workers")
 @click.option("--single_camera", "-s", type=bool, default=False, help="Convert only front camera")
 def main(waymo_tfrecord_root: str, output_wds_path: str, num_workers: int, single_camera: bool):
     all_filenames = list(Path(waymo_tfrecord_root).glob("*.tfrecord"))
     print(f"Found {len(all_filenames)} tfrecords")
 
-    with ProcessPoolExecutor(max_workers=num_workers) as executor:
-        futures = [
-            executor.submit(
-                convert_waymo_tfrecord_to_wds,
-                waymo_tfrecord_filename=filename,
-                output_wds_path=output_wds_path,
-                single_camera=single_camera
-            ) 
-            for filename in all_filenames
-        ]
+    for filename in all_filenames:
+        convert_waymo_tfrecord_to_wds(filename, output_wds_path, single_camera)
+
+    # with ProcessPoolExecutor(max_workers=num_workers) as executor:
+    #     futures = [
+    #         executor.submit(
+    #             convert_waymo_tfrecord_to_wds,
+    #             waymo_tfrecord_filename=filename,
+    #             output_wds_path=output_wds_path,
+    #             single_camera=single_camera
+    #         ) 
+    #         for filename in all_filenames
+    #     ]
         
-        for future in tqdm(
-            as_completed(futures), 
-            total=len(all_filenames),
-            desc="Converting tfrecords"
-        ):
-            try:
-                future.result() 
-            except Exception as e:
-                print(f"Failed to convert due to error: {e}")
+    #     for future in tqdm(
+    #         as_completed(futures), 
+    #         total=len(all_filenames),
+    #         desc="Converting tfrecords"
+    #     ):
+    #         try:
+    #             future.result() 
+    #         except Exception as e:
+    #             print(f"Failed to convert due to error: {e}")
 
 if __name__ == "__main__":
     main()

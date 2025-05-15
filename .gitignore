@@ -7,3 +7,4 @@ terasim_demo_render_pinhole/
 terasim_demo/
 streetview_image.jpg
 .env
+*.png

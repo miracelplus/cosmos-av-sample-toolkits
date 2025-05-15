@@ -20,7 +20,8 @@ import xml.etree.ElementTree as ET
 class TeraSim_Dataset:
     def __init__(self, terasim_record_root: Union[str, Path]):
         self.clip_id = terasim_record_root.stem
-        self.hdmap = sumolib.net.readNet(terasim_record_root / 'map.net.xml', withInternal=True, withPedestrianConnections=True)
+        self.sumo_net_path = terasim_record_root / 'map.net.xml'
+        self.sumo_net = sumolib.net.readNet(self.sumo_net_path, withInternal=True, withPedestrianConnections=True)
         self.fcd_path = terasim_record_root / 'fcd_all.xml'
         self.av_id = "CAV"
         self.fcd_data = ET.parse(self.fcd_path).getroot()
@@ -218,52 +219,104 @@ def convert_terasim_hdmap(output_root: Path, clip_id: str, dataset: TeraSim_Data
         clip_id: Clip ID
         dataset: TeraSim dataset object
     """
-    # Initialize dictionary to store all map elements
-    hdmap_name_to_data = {
-        'lane': [],
-        'road_line': [],
-        'road_edge': [],
-        'crosswalk': [],
-        'driveway': []
-    }
+    def hump_to_underline(hump_str):
+        import re
+        return re.sub(r'([a-z])([A-Z])', r'\1_\2', hump_str).lower()
+    from scenparse.processors.sumo2waymo import SUMO2Waymo
+    sumo2waymo = SUMO2Waymo(dataset.sumo_net_path)
+    sumo2waymo.parse(have_road_edges=True, have_road_lines=True)
+    scenario = sumo2waymo.convert_to_scenario(scenario_id=clip_id)
+
+    hdmap_names_polyline = ["lane", "road_line", "road_edge"]
+    hdmap_names_polygon = ["crosswalk", "speed_bump", "driveway"]
     
-    # Process road-related elements
-    for edge in dataset.hdmap.getEdges():
-        map_elements = get_map_elements_from_edge(edge)
-        for element_type, elements in map_elements.items():
-            hdmap_name_to_data[element_type].extend(elements)
+    hdmap_name_to_data = {}
+    for hdmap_name in hdmap_names_polyline + hdmap_names_polygon:
+        hdmap_name_to_data[hump_to_underline(hdmap_name)] = []
+
+
+    map_features_list = json_format.MessageToDict(scenario)['mapFeatures']
+
+    for hdmap_content in map_features_list:
+        hdmap_name = list(hdmap_content.keys())
+        hdmap_name.remove("id")
+        hdmap_name = hdmap_name[0]
+        hdmap_name_lower = hump_to_underline(hdmap_name)
+
+        hdmap_data = hdmap_content[hdmap_name]
+        if hdmap_name_lower in hdmap_names_polyline:
+            hdmap_data = hdmap_data['polyline']
+            polyline = [[point['x'], point['y'], point['z']] for point in hdmap_data]
+            hdmap_name_to_data[hdmap_name_lower].append(polyline)
+        elif hdmap_name_lower in hdmap_names_polygon:
+            hdmap_data = hdmap_data['polygon']
+            polygon = [[point['x'], point['y'], point['z']] for point in hdmap_data]
+            hdmap_name_to_data[hdmap_name_lower].append(polygon)
+        else:
+            print(f"Unkown hdmap item name: {hdmap_name}, skip this item")
+
+    # Plot all HDMap elements for visualization
+    import matplotlib.pyplot as plt
     
-    # Process junction-related elements
-    crosswalk_driveway = get_crosswalk_and_driveway(dataset.hdmap)
-    hdmap_name_to_data['crosswalk'].extend(crosswalk_driveway['crosswalk'])
-    hdmap_name_to_data['driveway'].extend(crosswalk_driveway['driveway'])
+    plt.figure(figsize=(12, 8))
+    colors = ['r', 'g', 'b', 'c', 'm', 'y']
     
-    # Convert to RDS-HQ format
+    for i, (hdmap_name, hdmap_data) in enumerate(hdmap_name_to_data.items()):
+        if len(hdmap_data) == 0:
+            continue
+            
+        color = colors[i % len(colors)]
+        for polyline in hdmap_data:
+            polyline = np.array(polyline)
+            plt.plot(polyline[:, 0], polyline[:, 1], color=color, alpha=0.5, label=hdmap_name)
+        
+    plt.title(f'HDMap Elements Visualization - {clip_id}')
+    plt.xlabel('X (meters)')
+    plt.ylabel('Y (meters)') 
+    plt.axis('equal')
+    plt.grid(True)
+    plt.legend()
+    
+    # Save plot
+    plt.savefig("sumo_waymo_hdmap_visualize.png")
+    plt.close()
+
+    
+
+    # convert to cosmos's name convention for easier processing
     hdmap_name_to_cosmos = {
         'lane': 'lanes',
         'road_line': 'lanelines',
         'road_edge': 'road_boundaries',
         'crosswalk': 'crosswalks',
-        'driveway': 'driveways'
+        'speed_bump': None,
+        'driveway': None
     }
-    
-    # Save data
+
     for hdmap_name, hdmap_data in hdmap_name_to_data.items():
         hdmap_name_in_cosmos = hdmap_name_to_cosmos[hdmap_name]
-        
+        if hdmap_name_in_cosmos is None:
+            continue
+
+        if hdmap_name in hdmap_names_polyline:
+            vertex_indicator = 'polyline3d'
+        else:
+            vertex_indicator = 'surface'
+
+        # to match cosmos format, the easiest way is to add 'vertices' key for the polyline or polygon
         sample = {'__key__': clip_id, f'{hdmap_name_in_cosmos}.json': {'labels': []}}
-        
-        for polyline in hdmap_data:
+
+        for each_polyline_or_polygon in hdmap_data:
             sample[f'{hdmap_name_in_cosmos}.json']['labels'].append({
                 'labelData': {
                     'shape3d': {
-                        'polyline3d': {
-                            'vertices': polyline
+                        vertex_indicator: {
+                            'vertices': each_polyline_or_polygon
                         }
                     }
                 }
             })
-        
+
         write_to_tar(sample, output_root / f'3d_{hdmap_name_in_cosmos}' / f'{clip_id}.tar')
 
 def convert_waymo_pose(output_root: Path, clip_id: str, dataset: tf.data.TFRecordDataset):
@@ -463,26 +516,28 @@ def convert_terasim_to_wds(
 def main(terasim_record_root: str, output_wds_path: str, num_workers: int, single_camera: bool):
     all_filenames = list(Path(terasim_record_root).iterdir())
     print(f"Found {len(all_filenames)} TeraSim records")
-    with ProcessPoolExecutor(max_workers=num_workers) as executor:
-        futures = [
-            executor.submit(
-                convert_terasim_to_wds,
-                terasim_record_root=filename,
-                output_wds_path=output_wds_path,
-                single_camera=single_camera
-            ) 
-            for filename in all_filenames
-        ]
+    for filename in all_filenames:
+        convert_terasim_to_wds(filename, output_wds_path, single_camera)
+    # with ProcessPoolExecutor(max_workers=num_workers) as executor:
+    #     futures = [
+    #         executor.submit(
+    #             convert_terasim_to_wds,
+    #             terasim_record_root=filename,
+    #             output_wds_path=output_wds_path,
+    #             single_camera=single_camera
+        #     ) 
+        #     for filename in all_filenames
+        # ]
         
-        for future in tqdm(
-            as_completed(futures), 
-            total=len(all_filenames),
-            desc="Converting tfrecords"
-        ):
-            try:
-                future.result() 
-            except Exception as e:
-                print(f"Failed to convert due to error: {e}")
+        # for future in tqdm(
+        #     as_completed(futures), 
+        #     total=len(all_filenames),
+        #     desc="Converting tfrecords"
+        # ):
+        #     try:
+        #         future.result() 
+        #     except Exception as e:
+        #         print(f"Failed to convert due to error: {e}")
 
 if __name__ == "__main__":
     main()
