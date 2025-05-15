@@ -8,3 +8,6 @@ terasim_demo/
 streetview_image.jpg
 .env
 *.png
+terasim_dataset*
+waymo_demo*
+test.mp4

@@ -1,3 +1,4 @@
+from matplotlib import pyplot as plt
 import numpy as np
 import tensorflow as tf
 import click
@@ -17,17 +18,190 @@ from utils.bbox_utils import interpolate_pose
 
 import sumolib
 import xml.etree.ElementTree as ET
+
 class TeraSim_Dataset:
-    def __init__(self, terasim_record_root: Union[str, Path]):
+    """
+    Dataset class for TeraSim data that provides iteration over the last N timesteps.
+    Implements similar interface as Waymo dataset for compatibility.
+    """
+    def __init__(self, terasim_record_root: Union[str, Path], last_n_timesteps: int = 100):
+        """
+        Initialize the TeraSim dataset.
+        
+        Args:
+            terasim_record_root: Path to the root directory containing TeraSim data
+            last_n_timesteps: Number of last timesteps to keep (default: 100)
+        """
         self.clip_id = terasim_record_root.stem
         self.sumo_net_path = terasim_record_root / 'map.net.xml'
         self.sumo_net = sumolib.net.readNet(self.sumo_net_path, withInternal=True, withPedestrianConnections=True)
         self.fcd_path = terasim_record_root / 'fcd_all.xml'
-        self.av_id = "CAV"
+        self.av_id = "CAV"  # ID of the autonomous vehicle in the simulation
+        
+        # Parse XML data
         self.fcd_data = ET.parse(self.fcd_path).getroot()
         
+        # Get all timesteps and keep only the last N
+        all_timesteps = self.fcd_data.findall('timestep')
+        self.timesteps = all_timesteps[-last_n_timesteps:] if len(all_timesteps) > last_n_timesteps else all_timesteps
+        self.current_idx = 0
+        
+        # Store the first and last timestamp for debugging
+        self.start_time = float(self.timesteps[0].get('time'))
+        self.end_time = float(self.timesteps[-1].get('time'))
+        print(f"Dataset loaded: time range [{self.start_time}, {self.end_time}], {len(self.timesteps)} frames")
+        
     def __iter__(self):
+        """Reset iterator index and return self"""
+        self.current_idx = 0
         return self
+        
+    def __next__(self):
+        """
+        Get next frame data in format similar to Waymo dataset.
+        Raises StopIteration when no more frames are available.
+        """
+        if self.current_idx >= len(self.timesteps):
+            raise StopIteration
+            
+        timestep = self.timesteps[self.current_idx]
+        self.current_idx += 1
+        
+        # Create frame data in a format similar to Waymo dataset
+        frame_data = {
+            'timestamp': float(timestep.get('time')),
+            'vehicle_pose': self._get_vehicle_pose(timestep),
+            'all_agent_bbox': self._get_all_agent_bbox(timestep),
+        }
+        
+        return frame_data
+    
+    def _get_all_agent_bbox(self, timestep):
+        """
+        Get all agent bbox from timestep data.
+        """
+        all_agent_bbox = {}
+        # iterate all agents in the timestep
+        for agent in timestep.findall('vehicle'):
+            agent_id = agent.get('id')
+            all_agent_bbox[agent_id] = self._get_agent_bbox(timestep, agent_id)
+        return all_agent_bbox
+    
+    def _get_agent_bbox(self, timestep, agent_id):
+        """
+        Get agent bbox from timestep data, similar to Waymo bbox format.
+
+        Args:
+            timestep: XML element for the current timestep
+            agent_id: string, the id of the agent (vehicle, pedestrian, etc.)
+
+        Returns:
+            dict: {
+                'object_to_world': 4x4 list, transformation matrix in world coordinates,
+                'object_lwh': [length, width, height],
+                'object_is_moving': bool,
+                'object_type': str
+            }
+        """
+        # Find the agent in the current timestep
+        agent = timestep.find(f"vehicle[@id='{agent_id}']")
+        if agent is None:
+            raise ValueError(f"Cannot find agent with id {agent_id}")
+
+        # Extract position, orientation, and size
+        x = float(agent.get('x'))
+        y = float(agent.get('y'))
+        z = float(agent.get('z'))
+        angle = float(agent.get('angle'))  # Angle in degrees, SUMO: 0=east, 90=north
+        length = float(agent.get('length', 4.5))  # Default length if not present
+        width = float(agent.get('width', 2.0))    # Default width if not present
+        height = float(agent.get('height', 1.5))  # Default height if not present
+
+        # Convert SUMO angle to FLU convention
+        flu_angle = (90 - angle) % 360
+        angle_rad = np.radians(flu_angle)
+
+        # Build rotation matrix (FLU: x-forward, y-left, z-up)
+        rotation = np.eye(4)
+        rotation[0:3, 0:3] = np.array([
+            [np.cos(angle_rad), -np.sin(angle_rad), 0],
+            [np.sin(angle_rad),  np.cos(angle_rad), 0],
+            [0,                 0,                 1]
+        ])
+
+        # Set translation (FLU: x = north, y = -east)
+        translation = np.eye(4)
+        translation[0, 3] = y      # SUMO y (north) -> FLU x
+        translation[1, 3] = -x     # -SUMO x (east) -> FLU y
+        translation[2, 3] = z      # Assume ground level
+
+        # Combine rotation and translation
+        object_to_world = translation @ rotation
+
+        # Get speed (if available), otherwise set to 0
+        speed = float(agent.get('speed', 0.0))
+        min_moving_speed = 0.2
+        object_is_moving = bool(speed > min_moving_speed)
+
+        # Set object type (for TeraSim, usually "Car")
+        object_type = "Car"
+
+        # Pack results
+        bbox_info = {
+            'object_to_world': object_to_world.tolist(),
+            'object_lwh': [length, width, height],
+            'object_is_moving': object_is_moving,
+            'object_type': object_type
+        }
+
+        return bbox_info
+    
+    def _get_vehicle_pose(self, timestep) -> np.ndarray:
+        """
+        Extract vehicle pose from timestep data and convert to 4x4 transformation matrix.
+        
+        Args:
+            timestep: XML element containing vehicle data for current timestep
+            
+        Returns:
+            np.ndarray: 4x4 transformation matrix in FLU convention (Forward-Left-Up)
+            
+        Raises:
+            ValueError: If vehicle with specified ID is not found
+        """
+        # Find vehicle element in current timestep
+        vehicle = timestep.find(f"vehicle[@id='{self.av_id}']")
+        if vehicle is None:
+            raise ValueError(f"Cannot find vehicle with id {self.av_id}")
+            
+        # Extract position and angle from XML
+        x = float(vehicle.get('x'))
+        y = float(vehicle.get('y'))
+        z = float(vehicle.get('z'))
+        angle = float(vehicle.get('angle'))  # Angle in degrees
+        
+        # Create 4x4 transformation matrix
+        pose = np.eye(4)
+        
+        # Convert angle to radians and create rotation matrix
+        # Note: SUMO's angle convention might need adjustment to match FLU
+        angle_rad = np.radians(angle)
+        pose[0:2, 0:2] = np.array([
+            [np.cos(angle_rad), -np.sin(angle_rad)],
+            [np.sin(angle_rad), np.cos(angle_rad)]
+        ])
+        
+        # Set translation (position)
+        pose[0:2, 3] = [x, y]
+        
+        # Note: Z coordinate is assumed to be 0 as SUMO is 2D
+        # The height of the vehicle's reference point remains constant
+        pose[2, 3] = z
+        return pose
+    
+    def __len__(self):
+        """Return the number of timesteps in the dataset"""
+        return len(self.timesteps)
 
 WaymoProto2SemanticLabel = {
     label_pb2.Label.Type.TYPE_UNKNOWN: "Unknown",
@@ -37,7 +211,7 @@ WaymoProto2SemanticLabel = {
     label_pb2.Label.Type.TYPE_CYCLIST: "Cyclist",
 }
 
-CameraNames = ['front', 'front_left', 'front_right', 'side_left', 'side_right']
+CameraNames = ['front']
 
 SourceFps = 10 # waymo's recording fps
 TargetFps = 30 # cosmos's expected fps
@@ -55,119 +229,21 @@ if physical_devices:
     except Exception as e:
         print(e)
 
-def convert_waymo_intrinsics(output_root: Path, clip_id: str, dataset: tf.data.TFRecordDataset):
+def convert_terasim_intrinsics(output_root: Path, clip_id: str, dataset: tf.data.TFRecordDataset):
     """
-    read the first frame and convert the intrinsics to wds format
+    Use the front camera's intrinsics in Waymo openmotion dataset
 
     Minimal required format:
         sample['pinhole_intrinsic.{camera_name}.npy'] = np.ndarray with shape (4, 4)
     """
     sample = {'__key__': clip_id}
 
-    for frame_idx, data in enumerate(dataset):
-        frame = dataset_pb2.Frame()
-        frame.ParseFromString(bytearray(data.numpy()))
-
-        for camera_calib in frame.context.camera_calibrations:
-            camera_name = get_camera_name(camera_calib.name).lower()
-
-            intrinsic = camera_calib.intrinsic
-            fx, fy, cx, cy = intrinsic[:4]
-            w, h = camera_calib.width, camera_calib.height
-
-            sample[f'pinhole_intrinsic.{camera_name}.npy'] = \
-                np.array([fx, fy, cx, cy, w, h])
-
-        write_to_tar(sample, output_root / 'pinhole_intrinsic' / f'{clip_id}.tar')
-
-        # only process the first frame
-        break
-
-def get_map_elements_from_edge(edge):
-    """
-    Extract map elements (lane, road_line, road_edge) from a SUMO edge.
-    
-    Args:
-        edge: SUMO edge object
-        
-    Returns:
-        dict: Dictionary containing different types of map elements
-    """
-    # Initialize dictionary to store map elements
-    map_elements = {
-        'lane': [],          # Center lines of lanes
-        'road_line': [],     # Lane markings
-        'road_edge': []      # Road boundaries
-    }
-    
-    # Get edge basic information
-    shape = edge.getShape()  # Get edge shape points
-    lanes = edge.getLanes()  # Get all lanes in this edge
-    
-    # Calculate total width from all lanes
-    total_width = sum(lane.getWidth() for lane in lanes)
-    
-    # Process road boundaries (road_edge)
-    left_boundary = []
-    right_boundary = []
-    for i in range(len(shape)-1):
-        # Calculate direction vector between current and next point
-        dx = shape[i+1][0] - shape[i][0]
-        dy = shape[i+1][1] - shape[i][1]
-        
-        # Calculate perpendicular vector
-        perp_x = -dy
-        perp_y = dx
-        
-        # Normalize perpendicular vector
-        length = np.sqrt(perp_x**2 + perp_y**2)
-        perp_x /= length
-        perp_y /= length
-        
-        # Calculate left and right boundary points using total width
-        left_point = [shape[i][0] + perp_x * total_width/2, shape[i][1] + perp_y * total_width/2, 0]
-        right_point = [shape[i][0] - perp_x * total_width/2, shape[i][1] - perp_y * total_width/2, 0]
-        
-        left_boundary.append(left_point)
-        right_boundary.append(right_point)
-    
-    map_elements['road_edge'].extend([left_boundary, right_boundary])
-    
-    # Process lanes and lane markings
-    for i, lane in enumerate(lanes):
-        # Get lane center line
-        lane_shape = lane.getShape()
-        map_elements['lane'].append([[x, y, 0] for x, y in lane_shape])
-        
-        # Get lane width
-        lane_width = lane.getWidth()
-        
-        # Calculate lane markings
-        if i < len(lanes) - 1:  # Not the last lane
-            lane_line = []
-            for j in range(len(lane_shape)):
-                if j < len(lane_shape) - 1:
-                    # Calculate direction vector
-                    dx = lane_shape[j+1][0] - lane_shape[j][0]
-                    dy = lane_shape[j+1][1] - lane_shape[j][1]
-                    
-                    # Calculate perpendicular vector
-                    perp_x = -dy
-                    perp_y = dx
-                    
-                    # Normalize
-                    length = np.sqrt(perp_x**2 + perp_y**2)
-                    perp_x /= length
-                    perp_y /= length
-                    
-                    # Calculate lane marking point
-                    line_point = [lane_shape[j][0] + perp_x * lane_width/2, 
-                                lane_shape[j][1] + perp_y * lane_width/2, 0]
-                    lane_line.append(line_point)
-            
-            map_elements['road_line'].append(lane_line)
-    
-    return map_elements
+    camera_name = "pinhole_intrinsic.front.npy"
+    fx, fy, cx, cy = [2044.50, 2044.50, 949.57, 633.24]
+    w, h = 1920, 1280
+    sample[f'pinhole_intrinsic.{camera_name}.npy'] = np.array([fx, fy, cx, cy, w, h])
+    write_to_tar(sample, output_root / 'pinhole_intrinsic' / f'{clip_id}.tar')
+    return
 
 def get_crosswalk_and_driveway(net):
     """
@@ -319,7 +395,7 @@ def convert_terasim_hdmap(output_root: Path, clip_id: str, dataset: TeraSim_Data
 
         write_to_tar(sample, output_root / f'3d_{hdmap_name_in_cosmos}' / f'{clip_id}.tar')
 
-def convert_waymo_pose(output_root: Path, clip_id: str, dataset: tf.data.TFRecordDataset):
+def convert_terasim_pose(output_root: Path, clip_id: str, dataset: TeraSim_Dataset):
     """
     read all frames and convert the pose to wds format. interpolate the pose to the target fps
 
@@ -330,36 +406,31 @@ def convert_waymo_pose(output_root: Path, clip_id: str, dataset: tf.data.TFRecor
     sample_camera_to_world = {'__key__': clip_id}
     sample_vehicle_to_world = {'__key__': clip_id}
 
-    camera_name_to_camera_to_vehicle = {}
-
-    # get camera_to_vehicle from the first frame
-    for frame_idx, data in enumerate(dataset):
-        frame = dataset_pb2.Frame()
-        frame.ParseFromString(bytearray(data.numpy()))
-
-        for camera_calib in frame.context.camera_calibrations:
-            camera_name = get_camera_name(camera_calib.name).lower()
-            camera_to_vehicle = np.array(camera_calib.extrinsic.transform).reshape((4, 4)) # FLU convention
-            camera_name_to_camera_to_vehicle[camera_name] = camera_to_vehicle
-
-        # only process the first frame
-        break
-
-    for frame_idx, data in enumerate(dataset):
-        frame = dataset_pb2.Frame()
-        frame.ParseFromString(bytearray(data.numpy()))
-
-        for image_data in frame.images:
-            camera_name = get_camera_name(image_data.name).lower()
-            vehicle_to_world = np.array(image_data.pose.transform).reshape((4, 4))
-            camera_to_vehicle = camera_name_to_camera_to_vehicle[camera_name]
-            camera_to_world = vehicle_to_world @ camera_to_vehicle # FLU convention
-            camera_to_world_opencv = np.concatenate(
-                [-camera_to_world[:, 1:2], -camera_to_world[:, 2:3], camera_to_world[:, 0:1], camera_to_world[:, 3:4]],
-                axis=1
-            )
-            sample_camera_to_world[f"{frame_idx * IndexScaleRatio:06d}.pose.{camera_name}.npy"] = camera_to_world_opencv
-
+    camera_name_to_camera_to_vehicle = {
+        "front": np.array([
+            [ 0.99999432, -0.00276256,  0.00193296,  1.53863471],
+            [ 0.00274548,  0.99995762,  0.00878713, -0.02439434],
+            [-1.95715769e-03, -8.78177324e-03, 9.99959524e-01, 2.11509408e+00],
+            [0., 0., 0., 1.]
+        ])}
+    camera_to_vehicle = camera_name_to_camera_to_vehicle["front"]
+    
+    # Process each frame
+    for frame_idx, frame_data in enumerate(dataset):
+        # Get vehicle pose in world coordinate (already in FLU convention)
+        vehicle_to_world = frame_data['vehicle_pose']
+        
+        # Calculate camera pose in world coordinate
+        camera_to_world = vehicle_to_world @ camera_to_vehicle
+        
+        # Convert to OpenCV coordinate convention
+        camera_to_world_opencv = np.concatenate(
+            [-camera_to_world[:, 1:2], -camera_to_world[:, 2:3], camera_to_world[:, 0:1], camera_to_world[:, 3:4]],
+            axis=1
+        )
+        
+        # Store poses
+        sample_camera_to_world[f"{frame_idx * IndexScaleRatio:06d}.pose.front.npy"] = camera_to_world_opencv
         sample_vehicle_to_world[f"{frame_idx * IndexScaleRatio:06d}.vehicle_pose.npy"] = vehicle_to_world
 
     # interpolate the pose to the target fps
@@ -402,25 +473,41 @@ def convert_waymo_pose(output_root: Path, clip_id: str, dataset: tf.data.TFRecor
 
     write_to_tar(sample_camera_to_world, output_root / 'pose' / f'{clip_id}.tar')
     write_to_tar(sample_vehicle_to_world, output_root / 'vehicle_pose' / f'{clip_id}.tar')
-
-
-def convert_waymo_timestamp(output_root: Path, clip_id: str, dataset: tf.data.TFRecordDataset):
-    """
-    read all frames and convert the timestamp to wds format.
-    """
-    sample = {'__key__': clip_id}
+    import matplotlib.pyplot as plt
+    # Plot vehicle trajectory
+    plt.figure(figsize=(12, 8))
     
-    for frame_idx, data in enumerate(dataset):
-        frame = dataset_pb2.Frame()
-        frame.ParseFromString(bytearray(data.numpy()))
-        timestamp_micros = frame.timestamp_micros
-        sample[f"{frame_idx * IndexScaleRatio:06d}.timestamp_micros.txt"] = str(timestamp_micros)
-        
-    write_to_tar(sample, output_root / 'timestamp' / f'{clip_id}.tar')
+    # Extract vehicle positions from vehicle poses
+    vehicle_positions = []
+    for frame_idx in sorted(sample_vehicle_to_world.keys()):
+        if frame_idx == "__key__":
+            continue
+        pose = sample_vehicle_to_world[frame_idx]
+        # Get x,y position from translation part of pose matrix
+        position = pose[0:2, 3]  
+        vehicle_positions.append(position)
+    
+    vehicle_positions = np.array(vehicle_positions)
+    
+    # Plot vehicle trajectory
+    plt.plot(vehicle_positions[:, 0], vehicle_positions[:, 1], 'b-', label='Vehicle Path')
+    plt.scatter(vehicle_positions[0, 0], vehicle_positions[0, 1], c='g', s=100, label='Start')
+    plt.scatter(vehicle_positions[-1, 0], vehicle_positions[-1, 1], c='r', s=100, label='End')
+    
+    plt.title('Vehicle 2D Trajectory')
+    plt.xlabel('X Position (m)')
+    plt.ylabel('Y Position (m)') 
+    plt.axis('equal')  # Set equal scale for x and y
+    plt.grid(True)
+    plt.legend()
+    
+    # Save plot
+    plt.savefig('vehicle_pose_trajectory.png')
+    plt.close()
 
-def convert_waymo_bbox(output_root: Path, clip_id: str, dataset: tf.data.TFRecordDataset):
+def convert_terasim_bbox(output_root: Path, clip_id: str, dataset: TeraSim_Dataset):
     """
-    read all frames and convert the bbox to wds format
+    Read all frames and convert the bbox to wds format for TeraSim dataset.
 
     Minimal required format:
         sample['{frame_idx:06d}.all_object_info.json'] = {
@@ -430,63 +517,27 @@ def convert_waymo_bbox(output_root: Path, clip_id: str, dataset: tf.data.TFRecor
                 'object_is_moving' : bool,
                 'object_type' : str
             },
-            'object_id 2' : {
-                ...
-            },
             ...
         }
     """
     sample = {'__key__': clip_id}
-    min_moving_speed = 0.2
 
-    valid_bbox_types = [
-        label_pb2.Label.Type.TYPE_VEHICLE,
-        label_pb2.Label.Type.TYPE_PEDESTRIAN,
-        label_pb2.Label.Type.TYPE_CYCLIST
-    ]
-
-    for frame_idx, data in enumerate(dataset):
-        frame = dataset_pb2.Frame()
-        frame.ParseFromString(bytearray(data.numpy()))
-
-        vehicle_to_world = np.array(frame.pose.transform).reshape((4, 4))
+    for frame_idx, frame_data in enumerate(dataset):
+        # Get all agent bbox info for this frame
+        all_agent_bbox = frame_data['all_agent_bbox']
         sample[f"{frame_idx * IndexScaleRatio:06d}.all_object_info.json"] = {}
 
-        for label in frame.laser_labels:
-            if label.type not in valid_bbox_types:
-                continue
-
-            if not label.camera_synced_box.ByteSize():
-                continue
-
-            object_id = label.id
-            object_type = WaymoProto2SemanticLabel[label.type]
-
-            center_in_vehicle = np.array([label.camera_synced_box.center_x, label.camera_synced_box.center_y, label.camera_synced_box.center_z, 1]).reshape((4, 1))
-            center_in_world = vehicle_to_world @ center_in_vehicle
-            heading = label.camera_synced_box.heading
-            rotation_in_vehicle = R.from_euler("xyz", [0, 0, heading], degrees=False).as_matrix()
-            rotation_in_world = vehicle_to_world[:3, :3] @ rotation_in_vehicle
-
-            object_to_world = np.eye(4)
-            object_to_world[:3, :3] = rotation_in_world
-            object_to_world[:3, 3] = center_in_world.flatten()[:3]
-
-            object_lwh = np.array([label.camera_synced_box.length, label.camera_synced_box.width, label.camera_synced_box.height])
-            
-            speed = np.sqrt(label.metadata.speed_x**2 + label.metadata.speed_y**2 + label.metadata.speed_z**2)
-            object_is_moving = bool(speed > min_moving_speed)
-
+        for object_id, bbox_info in all_agent_bbox.items():
+            # Directly use the bbox_info dict from TeraSim_Dataset
             sample[f"{frame_idx * IndexScaleRatio:06d}.all_object_info.json"][object_id] = {
-                'object_to_world': object_to_world.tolist(),
-                'object_lwh': object_lwh.tolist(),
-                'object_is_moving': object_is_moving,
-                'object_type': object_type
+                'object_to_world': bbox_info['object_to_world'],
+                'object_lwh': bbox_info['object_lwh'],
+                'object_is_moving': bbox_info['object_is_moving'],
+                'object_type': bbox_info['object_type']
             }
 
+    # Write all results to tar file
     write_to_tar(sample, output_root / 'all_object_info' / f'{clip_id}.tar')
-
-
 
 def convert_terasim_to_wds(
     terasim_record_root: Union[str, Path],
@@ -502,15 +553,17 @@ def convert_terasim_to_wds(
     
     dataset = TeraSim_Dataset(terasim_record_root)
 
-    convert_terasim_hdmap(output_wds_path, clip_id, dataset)
-    convert_terasim_intrinsics(output_wds_path, clip_id, dataset)
     convert_terasim_pose(output_wds_path, clip_id, dataset)
-    convert_terasim_timestamp(output_wds_path, clip_id, dataset)
+    convert_terasim_pose(output_wds_path, clip_id, dataset)
+    convert_terasim_hdmap(output_wds_path, clip_id, dataset)
     convert_terasim_bbox(output_wds_path, clip_id, dataset)
+    
+    convert_terasim_intrinsics(output_wds_path, clip_id, dataset)
+    
 
 @click.command()
-@click.option("--terasim_record_root", "-i", type=str, help="Terasim record root", default="/home/mtl/cosmos-av-sample-toolkits/terasim_demo")
-@click.option("--output_wds_path", "-o", type=str, help="Output wds path", default="/home/mtl/cosmos-av-sample-toolkits/terasim_demo_render_ftheta")
+@click.option("--terasim_record_root", "-i", type=str, help="Terasim record root", default="/home/mtl/cosmos-av-sample-toolkits/terasim_dataset")
+@click.option("--output_wds_path", "-o", type=str, help="Output wds path", default="/home/mtl/cosmos-av-sample-toolkits/terasim_demo")
 @click.option("--num_workers", "-n", type=int, default=1, help="Number of workers")
 @click.option("--single_camera", "-s", type=bool, default=False, help="Convert only front camera")
 def main(terasim_record_root: str, output_wds_path: str, num_workers: int, single_camera: bool):

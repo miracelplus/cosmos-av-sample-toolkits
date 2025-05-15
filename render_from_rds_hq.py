@@ -437,9 +437,9 @@ def render_sample_rgb(
         )
             
 @click.command()
-@click.option("--input_root", '-i', type=str, help="the root folder of the input data")
-@click.option("--output_root", '-o', type=str, required=True, help="the root folder of the output data")
-@click.option("--dataset", "-d", type=str, default="rds_hq", help="the dataset name, 'rds_hq' or 'waymo' or 'waymo_mv', see xxx.json in config folder")
+@click.option("--input_root", '-i', type=str, help="the root folder of the input data", default="terasim_demo")
+@click.option("--output_root", '-o', type=str, help="the root folder of the output data", default="terasim_demo_render_ftheta")
+@click.option("--dataset", "-d", type=str, default="waymo", help="the dataset name, 'rds_hq' or 'waymo' or 'waymo_mv', see xxx.json in config folder")
 @click.option("--camera_type", "-c", type=str, default="ftheta", help="the type of camera model, 'pinhole' or 'ftheta'")
 @click.option("--skip", "-s", multiple=True, help="can be 'hdmap' or 'lidar'")
 @click.option("--post_training", "-p", type=bool, default=False, help="if True, output the RGB video for post-training")
@@ -492,6 +492,8 @@ def main(input_root, output_root, dataset, camera_type, skip, post_training, res
     # shuffle the clip list
     np.random.seed(0)
     np.random.shuffle(clip_list)
+
+    skip = ['lidar']
 
     if USE_RAY:
         ray.init()
