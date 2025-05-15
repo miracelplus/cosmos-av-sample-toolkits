@@ -112,27 +112,30 @@ class TeraSim_Dataset:
         x = float(agent.get('x'))
         y = float(agent.get('y'))
         z = float(agent.get('z'))
-        angle = float(agent.get('angle'))  # Angle in degrees, SUMO: 0=east, 90=north
+        sumo_angle = float(agent.get('angle'))  # Angle in degrees, SUMO: 0=north, 90=east
         length = float(agent.get('length', 4.5))  # Default length if not present
         width = float(agent.get('width', 2.0))    # Default width if not present
         height = float(agent.get('height', 1.5))  # Default height if not present
 
         # Convert SUMO angle to FLU convention
-        flu_angle = (90 - angle) % 360
-        angle_rad = np.radians(flu_angle)
+        # SUMO: 0=north, 90=east, 180=south, 270=west
+        # FLU: x-forward, y-left, z-up
+        # We need to convert from SUMO's heading angle to FLU's rotation angle
+        heading = (90 - sumo_angle) % 360   # Convert to FLU convention
+        heading_rad = np.radians(heading)
 
         # Build rotation matrix (FLU: x-forward, y-left, z-up)
         rotation = np.eye(4)
         rotation[0:3, 0:3] = np.array([
-            [np.cos(angle_rad), -np.sin(angle_rad), 0],
-            [np.sin(angle_rad),  np.cos(angle_rad), 0],
+            [np.cos(heading_rad), -np.sin(heading_rad), 0],
+            [np.sin(heading_rad),  np.cos(heading_rad), 0],
             [0,                 0,                 1]
         ])
 
         # Set translation (FLU: x = north, y = -east)
         translation = np.eye(4)
-        translation[0, 3] = y      # SUMO y (north) -> FLU x
-        translation[1, 3] = -x     # -SUMO x (east) -> FLU y
+        translation[0, 3] = x      # SUMO x (east) -> FLU x
+        translation[1, 3] = y     # SUMO y (north) -> FLU y
         translation[2, 3] = z      # Assume ground level
 
         # Combine rotation and translation
@@ -164,7 +167,7 @@ class TeraSim_Dataset:
             timestep: XML element containing vehicle data for current timestep
             
         Returns:
-            np.ndarray: 4x4 transformation matrix in FLU convention (Forward-Left-Up)
+            np.ndarray: 4x4 transformation matrix in world coordinate system (x=east, y=north)
             
         Raises:
             ValueError: If vehicle with specified ID is not found
@@ -178,21 +181,25 @@ class TeraSim_Dataset:
         x = float(vehicle.get('x'))
         y = float(vehicle.get('y'))
         z = float(vehicle.get('z'))
-        angle = float(vehicle.get('angle'))  # Angle in degrees
+        sumo_angle = float(vehicle.get('angle'))  # Heading angle in degrees, SUMO: 0=north, 90=east
         
         # Create 4x4 transformation matrix
         pose = np.eye(4)
         
-        # Convert angle to radians and create rotation matrix
-        # Note: SUMO's angle convention might need adjustment to match FLU
-        angle_rad = np.radians(angle)
+        # Convert SUMO heading angle to world coordinate system angle
+        # SUMO: 0=north, 90=east, 180=south, 270=west
+        # World: 0=east, 90=north, 180=west, 270=south
+        heading = (90 - sumo_angle) % 360  # Convert to world coordinate system
+        heading_rad = np.radians(heading)
+        
+        # Set rotation matrix (World: x=east, y=north)
         pose[0:2, 0:2] = np.array([
-            [np.cos(angle_rad), -np.sin(angle_rad)],
-            [np.sin(angle_rad), np.cos(angle_rad)]
+            [np.cos(heading_rad), -np.sin(heading_rad)],
+            [np.sin(heading_rad), np.cos(heading_rad)]
         ])
         
         # Set translation (position)
-        pose[0:2, 3] = [x, y]
+        pose[0:2, 3] = [x, y]  # Keep SUMO coordinates (x=east, y=north)
         
         # Note: Z coordinate is assumed to be 0 as SUMO is 2D
         # The height of the vehicle's reference point remains constant
@@ -332,30 +339,30 @@ def convert_terasim_hdmap(output_root: Path, clip_id: str, dataset: TeraSim_Data
             print(f"Unkown hdmap item name: {hdmap_name}, skip this item")
 
     # Plot all HDMap elements for visualization
-    import matplotlib.pyplot as plt
+    # import matplotlib.pyplot as plt
     
-    plt.figure(figsize=(12, 8))
-    colors = ['r', 'g', 'b', 'c', 'm', 'y']
+    # plt.figure(figsize=(12, 8))
+    # colors = ['r', 'g', 'b', 'c', 'm', 'y']
     
-    for i, (hdmap_name, hdmap_data) in enumerate(hdmap_name_to_data.items()):
-        if len(hdmap_data) == 0:
-            continue
+    # for i, (hdmap_name, hdmap_data) in enumerate(hdmap_name_to_data.items()):
+    #     if len(hdmap_data) == 0:
+    #         continue
             
-        color = colors[i % len(colors)]
-        for polyline in hdmap_data:
-            polyline = np.array(polyline)
-            plt.plot(polyline[:, 0], polyline[:, 1], color=color, alpha=0.5, label=hdmap_name)
+    #     color = colors[i % len(colors)]
+    #     for polyline in hdmap_data:
+    #         polyline = np.array(polyline)
+    #         plt.plot(polyline[:, 0], polyline[:, 1], color=color, alpha=0.5, label=hdmap_name)
         
-    plt.title(f'HDMap Elements Visualization - {clip_id}')
-    plt.xlabel('X (meters)')
-    plt.ylabel('Y (meters)') 
-    plt.axis('equal')
-    plt.grid(True)
-    plt.legend()
+    # plt.title(f'HDMap Elements Visualization - {clip_id}')
+    # plt.xlabel('X (meters)')
+    # plt.ylabel('Y (meters)') 
+    # plt.axis('equal')
+    # plt.grid(True)
+    # plt.legend()
     
-    # Save plot
-    plt.savefig("sumo_waymo_hdmap_visualize.png")
-    plt.close()
+    # # Save plot
+    # plt.savefig("sumo_waymo_hdmap_visualize.png")
+    # plt.close()
 
     
 
@@ -401,7 +408,7 @@ def convert_terasim_pose(output_root: Path, clip_id: str, dataset: TeraSim_Datas
 
     Minimal required format:
         sample_camera_to_world['{frame_idx:06d}.pose.{camera_name}.npy'] = np.ndarray with shape (4, 4). opencv convention
-        sample_vehicle_to_world['{frame_idx:06d}.vehicle_pose.npy'] = np.ndarray with shape (4, 4). flu convention
+        sample_vehicle_to_world['{frame_idx:06d}.vehicle_pose.npy'] = np.ndarray with shape (4, 4). world coordinate system
     """
     sample_camera_to_world = {'__key__': clip_id}
     sample_vehicle_to_world = {'__key__': clip_id}
@@ -417,13 +424,13 @@ def convert_terasim_pose(output_root: Path, clip_id: str, dataset: TeraSim_Datas
     
     # Process each frame
     for frame_idx, frame_data in enumerate(dataset):
-        # Get vehicle pose in world coordinate (already in FLU convention)
+        # Get vehicle pose in world coordinate (x=east, y=north)
         vehicle_to_world = frame_data['vehicle_pose']
         
         # Calculate camera pose in world coordinate
         camera_to_world = vehicle_to_world @ camera_to_vehicle
         
-        # Convert to OpenCV coordinate convention
+        # Convert camera pose to OpenCV coordinate convention (FLU)
         camera_to_world_opencv = np.concatenate(
             [-camera_to_world[:, 1:2], -camera_to_world[:, 2:3], camera_to_world[:, 0:1], camera_to_world[:, 3:4]],
             axis=1
@@ -490,20 +497,20 @@ def convert_terasim_pose(output_root: Path, clip_id: str, dataset: TeraSim_Datas
     vehicle_positions = np.array(vehicle_positions)
     
     # Plot vehicle trajectory
-    plt.plot(vehicle_positions[:, 0], vehicle_positions[:, 1], 'b-', label='Vehicle Path')
-    plt.scatter(vehicle_positions[0, 0], vehicle_positions[0, 1], c='g', s=100, label='Start')
-    plt.scatter(vehicle_positions[-1, 0], vehicle_positions[-1, 1], c='r', s=100, label='End')
+    # plt.plot(vehicle_positions[:, 0], vehicle_positions[:, 1], 'b-', label='Vehicle Path')
+    # plt.scatter(vehicle_positions[0, 0], vehicle_positions[0, 1], c='g', s=100, label='Start')
+    # plt.scatter(vehicle_positions[-1, 0], vehicle_positions[-1, 1], c='r', s=100, label='End')
     
-    plt.title('Vehicle 2D Trajectory')
-    plt.xlabel('X Position (m)')
-    plt.ylabel('Y Position (m)') 
-    plt.axis('equal')  # Set equal scale for x and y
-    plt.grid(True)
-    plt.legend()
+    # plt.title('Vehicle 2D Trajectory')
+    # plt.xlabel('X Position (m)')
+    # plt.ylabel('Y Position (m)') 
+    # plt.axis('equal')  # Set equal scale for x and y
+    # plt.grid(True)
+    # plt.legend()
     
-    # Save plot
-    plt.savefig('vehicle_pose_trajectory.png')
-    plt.close()
+    # # Save plot
+    # plt.savefig('vehicle_pose_trajectory.png')
+    # plt.close()
 
 def convert_terasim_bbox(output_root: Path, clip_id: str, dataset: TeraSim_Dataset):
     """
@@ -554,10 +561,8 @@ def convert_terasim_to_wds(
     dataset = TeraSim_Dataset(terasim_record_root)
 
     convert_terasim_pose(output_wds_path, clip_id, dataset)
-    convert_terasim_pose(output_wds_path, clip_id, dataset)
     convert_terasim_hdmap(output_wds_path, clip_id, dataset)
     convert_terasim_bbox(output_wds_path, clip_id, dataset)
-    
     convert_terasim_intrinsics(output_wds_path, clip_id, dataset)
     
 
