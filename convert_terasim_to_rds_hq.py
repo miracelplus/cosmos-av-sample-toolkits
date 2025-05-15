@@ -112,10 +112,25 @@ class TeraSim_Dataset:
         x = float(agent.get('x'))
         y = float(agent.get('y'))
         z = float(agent.get('z'))
+
+        # Get object type from agent tag and type attribute
+        agent_tag = agent.tag  # 'vehicle' or 'person'
+        agent_type = agent.get('type', '')  # Get type attribute if exists
+        
+        if agent_tag == 'person':
+            object_type = 'Person'
+        elif 'bike' in agent_type.lower():
+            object_type = 'Bicycle' 
+        else:
+            object_type = 'Car'  # Default type for vehicles
+        
         sumo_angle = float(agent.get('angle'))  # Angle in degrees, SUMO: 0=north, 90=east
         length = float(agent.get('length', 4.5))  # Default length if not present
         width = float(agent.get('width', 2.0))    # Default width if not present
         height = float(agent.get('height', 1.5))  # Default height if not present
+
+        # Convert SUMO position (front bumper) to Waymo position (rear axle)
+        # x, y, z = self.convert_sumo_to_waymo_position(x, y, z, sumo_angle, length)
 
         # Convert SUMO angle to FLU convention
         # SUMO: 0=north, 90=east, 180=south, 270=west
@@ -136,7 +151,7 @@ class TeraSim_Dataset:
         translation = np.eye(4)
         translation[0, 3] = x      # SUMO x (east) -> FLU x
         translation[1, 3] = y     # SUMO y (north) -> FLU y
-        translation[2, 3] = z      # Assume ground level
+        translation[2, 3] = z      # Now at rear axle height
 
         # Combine rotation and translation
         object_to_world = translation @ rotation
@@ -182,6 +197,10 @@ class TeraSim_Dataset:
         y = float(vehicle.get('y'))
         z = float(vehicle.get('z'))
         sumo_angle = float(vehicle.get('angle'))  # Heading angle in degrees, SUMO: 0=north, 90=east
+        length = float(vehicle.get('length', 4.5))  # Get vehicle length
+        
+        # Convert SUMO position (front bumper) to Waymo position (rear axle)
+        x, y, z = self.convert_sumo_to_waymo_position(x, y, z, sumo_angle, length)
         
         # Create 4x4 transformation matrix
         pose = np.eye(4)
@@ -201,14 +220,46 @@ class TeraSim_Dataset:
         # Set translation (position)
         pose[0:2, 3] = [x, y]  # Keep SUMO coordinates (x=east, y=north)
         
-        # Note: Z coordinate is assumed to be 0 as SUMO is 2D
-        # The height of the vehicle's reference point remains constant
+        # Set z coordinate (now at rear axle height)
         pose[2, 3] = z
         return pose
     
     def __len__(self):
         """Return the number of timesteps in the dataset"""
         return len(self.timesteps)
+
+    def convert_sumo_to_waymo_position(self, x: float, y: float, z: float, angle: float, length: float = 4.5) -> tuple:
+        """
+        Convert SUMO vehicle position (front bumper center) to Waymo position (rear axle center).
+        
+        Args:
+            x: SUMO x coordinate (front bumper center)
+            y: SUMO y coordinate (front bumper center)
+            z: SUMO z coordinate (ground height)
+            angle: Vehicle heading angle in degrees (SUMO convention: 0=north, 90=east)
+            length: Vehicle length in meters (default: 4.5m for typical sedan)
+            
+        Returns:
+            tuple: (x, y, z) coordinates in Waymo convention (rear axle center)
+        """
+        # Convert angle to radians
+        heading = (90 - angle) % 360
+        heading_rad = np.radians(heading)
+        
+        # Calculate offset from front bumper to rear axle
+        # Typical sedan: wheelbase ~2.7m, front overhang ~0.9m
+        # So rear axle is about (length/2 - front_overhang) meters behind front bumper
+        front_overhang = 0.9  # meters
+        rear_axle_offset = length/2 - front_overhang
+        
+        # Calculate rear axle position
+        rear_x = x - rear_axle_offset * np.sin(heading_rad)
+        rear_y = y - rear_axle_offset * np.cos(heading_rad)
+        
+        # Set rear axle height (typical sedan rear axle height)
+        rear_z = z + 0.55  # meters
+        
+        return rear_x, rear_y, rear_z
 
 WaymoProto2SemanticLabel = {
     label_pb2.Label.Type.TYPE_UNKNOWN: "Unknown",
@@ -351,7 +402,14 @@ def convert_terasim_hdmap(output_root: Path, clip_id: str, dataset: TeraSim_Data
     #     color = colors[i % len(colors)]
     #     for polyline in hdmap_data:
     #         polyline = np.array(polyline)
-    #         plt.plot(polyline[:, 0], polyline[:, 1], color=color, alpha=0.5, label=hdmap_name)
+    #         if hdmap_name in hdmap_names_polyline:
+    #             # Plot polylines for lane, road_line, road_edge
+    #             plt.plot(polyline[:, 0], polyline[:, 1], color=color, alpha=0.5, label=hdmap_name)
+    #         else:
+    #             # Plot filled polygons for crosswalk, speed_bump, driveway
+    #             plt.fill(polyline[:, 0], polyline[:, 1], color=color, alpha=0.3, label=hdmap_name)
+    #             # Also plot the polygon outline
+    #             plt.plot(polyline[:, 0], polyline[:, 1], color=color, alpha=0.5, linestyle='--')
         
     # plt.title(f'HDMap Elements Visualization - {clip_id}')
     # plt.xlabel('X (meters)')
@@ -361,7 +419,7 @@ def convert_terasim_hdmap(output_root: Path, clip_id: str, dataset: TeraSim_Data
     # plt.legend()
     
     # # Save plot
-    # plt.savefig("sumo_waymo_hdmap_visualize.png")
+    # plt.savefig("sumo_waymo_hdmap_visualize.png", dpi=300)
     # plt.close()
 
     
