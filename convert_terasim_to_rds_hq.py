@@ -106,7 +106,7 @@ class TeraSim_Dataset:
             }
         """
         # Find the agent in the current timestep
-        agent = timestep.find(f"vehicle[@id='{agent_id}']")
+        agent = timestep.find(f"*[@id='{agent_id}']") # find both vehicle and person
         if agent is None:
             raise ValueError(f"Cannot find agent with id {agent_id}")
 
@@ -120,16 +120,21 @@ class TeraSim_Dataset:
         agent_type = agent.get('type', '')  # Get type attribute if exists
         
         if agent_tag == 'person':
-            object_type = 'Person'
+            object_type = 'Pedestrian'
         elif 'bike' in agent_type.lower():
-            object_type = 'Bicycle' 
+            object_type = 'Cyclist' 
         else:
             object_type = 'Car'  # Default type for vehicles
+
+        bbox_type_size_dict = {
+            'Car': [5.0, 1.85, 1.5],
+            'Cyclist': [1.8, 0.6, 1.7],
+            'Pedestrian': [0.5, 0.5, 1.7]
+        }
+
+        length, width, height = bbox_type_size_dict[object_type]
         
         sumo_angle = float(agent.get('angle'))  # Angle in degrees, SUMO: 0=north, 90=east
-        length = float(agent.get('length', 4.5))  # Default length if not present
-        width = float(agent.get('width', 2.0))    # Default width if not present
-        height = float(agent.get('height', 1.5))  # Default height if not present
 
         # Convert SUMO position (front bumper) to Waymo position (rear axle)
         # x, y, z = self.convert_sumo_to_waymo_position(x, y, z, sumo_angle, length)
@@ -149,6 +154,8 @@ class TeraSim_Dataset:
             [0,                 0,                 1]
         ])
 
+        
+
         x, y, z = self.convert_sumo_to_waymo_bbox_center(x, y, z, sumo_angle, length, width, height)
 
         # Set translation (FLU: x = north, y = -east)
@@ -164,9 +171,6 @@ class TeraSim_Dataset:
         speed = float(agent.get('speed', 0.0))
         min_moving_speed = 0.2
         object_is_moving = bool(speed > min_moving_speed)
-
-        # Set object type (for TeraSim, usually "Car")
-        object_type = "Car"
 
         # Pack results
         bbox_info = {
