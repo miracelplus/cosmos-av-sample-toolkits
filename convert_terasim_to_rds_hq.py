@@ -24,7 +24,7 @@ class TeraSim_Dataset:
     Dataset class for TeraSim data that provides iteration over the last N timesteps.
     Implements similar interface as Waymo dataset for compatibility.
     """
-    def __init__(self, terasim_record_root: Union[str, Path], last_n_timesteps: int = 100, av_id: str = "CAV"):
+    def __init__(self, terasim_record_root: Union[str, Path], last_n_timesteps: int = 120, av_id: str = "CAV"):
         """
         Initialize the TeraSim dataset.
         
@@ -389,37 +389,37 @@ def convert_terasim_hdmap(output_root: Path, clip_id: str, dataset: TeraSim_Data
             print(f"Unkown hdmap item name: {hdmap_name}, skip this item")
 
     # Plot all HDMap elements for visualization
-    # import matplotlib.pyplot as plt
+    import matplotlib.pyplot as plt
     
-    # plt.figure(figsize=(12, 8))
-    # colors = ['r', 'g', 'b', 'c', 'm', 'y']
+    plt.figure(figsize=(12, 8))
+    colors = ['r', 'g', 'b', 'c', 'm', 'y']
     
-    # for i, (hdmap_name, hdmap_data) in enumerate(hdmap_name_to_data.items()):
-    #     if len(hdmap_data) == 0:
-    #         continue
+    for i, (hdmap_name, hdmap_data) in enumerate(hdmap_name_to_data.items()):
+        if len(hdmap_data) == 0:
+            continue
             
-    #     color = colors[i % len(colors)]
-    #     for polyline in hdmap_data:
-    #         polyline = np.array(polyline)
-    #         if hdmap_name in hdmap_names_polyline:
-    #             # Plot polylines for lane, road_line, road_edge
-    #             plt.plot(polyline[:, 0], polyline[:, 1], color=color, alpha=0.5, label=hdmap_name)
-    #         else:
-    #             # Plot filled polygons for crosswalk, speed_bump, driveway
-    #             plt.fill(polyline[:, 0], polyline[:, 1], color=color, alpha=0.3, label=hdmap_name)
-    #             # Also plot the polygon outline
-    #             plt.plot(polyline[:, 0], polyline[:, 1], color=color, alpha=0.5, linestyle='--')
+        color = colors[i % len(colors)]
+        for polyline in hdmap_data:
+            polyline = np.array(polyline)
+            if hdmap_name in hdmap_names_polyline:
+                # Plot polylines for lane, road_line, road_edge
+                plt.plot(polyline[:, 0], polyline[:, 1], color=color, alpha=0.5, label=hdmap_name)
+            else:
+                # Plot filled polygons for crosswalk, speed_bump, driveway
+                plt.fill(polyline[:, 0], polyline[:, 1], color=color, alpha=0.3, label=hdmap_name)
+                # Also plot the polygon outline
+                plt.plot(polyline[:, 0], polyline[:, 1], color=color, alpha=0.5, linestyle='--')
         
-    # plt.title(f'HDMap Elements Visualization - {clip_id}')
-    # plt.xlabel('X (meters)')
-    # plt.ylabel('Y (meters)') 
-    # plt.axis('equal')
-    # plt.grid(True)
-    # plt.legend()
+    plt.title(f'HDMap Elements Visualization - {clip_id}')
+    plt.xlabel('X (meters)')
+    plt.ylabel('Y (meters)') 
+    plt.axis('equal')
+    plt.grid(True)
+    plt.legend()
     
-    # # Save plot
-    # plt.savefig("sumo_waymo_hdmap_visualize.png", dpi=300)
-    # plt.close()
+    # Save plot
+    plt.savefig("sumo_waymo_hdmap_visualize.png", dpi=300)
+    plt.close()
 
     
 
@@ -554,20 +554,20 @@ def convert_terasim_pose(output_root: Path, clip_id: str, dataset: TeraSim_Datas
     vehicle_positions = np.array(vehicle_positions)
     
     # Plot vehicle trajectory
-    # plt.plot(vehicle_positions[:, 0], vehicle_positions[:, 1], 'b-', label='Vehicle Path')
-    # plt.scatter(vehicle_positions[0, 0], vehicle_positions[0, 1], c='g', s=100, label='Start')
-    # plt.scatter(vehicle_positions[-1, 0], vehicle_positions[-1, 1], c='r', s=100, label='End')
+    plt.plot(vehicle_positions[:, 0], vehicle_positions[:, 1], 'b-', label='Vehicle Path')
+    plt.scatter(vehicle_positions[0, 0], vehicle_positions[0, 1], c='g', s=100, label='Start')
+    plt.scatter(vehicle_positions[-1, 0], vehicle_positions[-1, 1], c='r', s=100, label='End')
     
-    # plt.title('Vehicle 2D Trajectory')
-    # plt.xlabel('X Position (m)')
-    # plt.ylabel('Y Position (m)') 
-    # plt.axis('equal')  # Set equal scale for x and y
-    # plt.grid(True)
-    # plt.legend()
+    plt.title('Vehicle 2D Trajectory')
+    plt.xlabel('X Position (m)')
+    plt.ylabel('Y Position (m)') 
+    plt.axis('equal')  # Set equal scale for x and y
+    plt.grid(True)
+    plt.legend()
     
-    # # Save plot
-    # plt.savefig('vehicle_pose_trajectory.png')
-    # plt.close()
+    # Save plot
+    plt.savefig('vehicle_pose_trajectory.png')
+    plt.close()
 
 def convert_terasim_bbox(output_root: Path, clip_id: str, dataset: TeraSim_Dataset):
     """
@@ -625,7 +625,7 @@ def convert_terasim_to_wds(
     
 
 @click.command()
-@click.option("--terasim_record_root", "-i", type=str, help="Terasim record root", default="/home/mtl/cosmos-av-sample-toolkits/terasim_dataset")
+@click.option("--terasim_record_root", "-i", type=str, help="Terasim record root", default="/home/mtl/cosmos-av-sample-toolkits/terasim_mcity_dataset")
 @click.option("--output_wds_path", "-o", type=str, help="Output wds path", default="/home/mtl/cosmos-av-sample-toolkits/terasim_demo")
 @click.option("--num_workers", "-n", type=int, default=1, help="Number of workers")
 @click.option("--single_camera", "-s", type=bool, default=False, help="Convert only front camera")

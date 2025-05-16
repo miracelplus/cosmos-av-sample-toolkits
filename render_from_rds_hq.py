@@ -152,16 +152,7 @@ def prepare_output(
     ):
     """
     Cut full video into small clips for cosmos training / inference and save them.
-
-    Args:
-        full_video: the full video to be cut. numpy array of shape (T, H, W, 3)
-        render_frame_ids: the frame ids to be rendered. list of int
-        render_name: the name of the rendered video. str. 'hdmap', 'lidar', or 'rgb'
-        settings: the settings of the dataset
-        output_root: the root folder of the output data
-        clip_id: the id of the clip
-        camera_name: the name of the camera
-        camera_type: the type of camera model, 'pinhole' or 'ftheta'
+    Now processes frames from back to front, allowing to drop frames from the beginning.
     """
     if post_training: 
         TARGET_RENDER_FPS = settings['POST_TRAINING']['TARGET_RENDER_FPS']
@@ -226,7 +217,14 @@ def render_sample_hdmap(
     resize_resolution: tuple[int, int] = (1280, 720),
     cosmos_resolution: tuple[int, int] = (1280, 704),
     resize_last: bool = False,
+    distance_threshold: float = 200.0,  # Maximum distance to render in meters
 ):
+    """
+    Render HD map projections with distance filtering.
+    Args:
+        ... (existing args) ...
+        distance_threshold: Maximum distance in meters to render. Objects beyond this distance will be filtered out.
+    """
     minimap_types = settings['MINIMAP_TYPES']
 
     camera_name_to_camera_poses, render_frame_ids, all_object_info, camera_name_to_camera_model = \
@@ -237,23 +235,50 @@ def render_sample_hdmap(
 
     for camera_name, camera_model in camera_name_to_camera_model.items():
         pose_all_frames = camera_name_to_camera_poses[camera_name]
+        camera_pose_initial_position = pose_all_frames[0][:3, 3]
 
         minimaps_projection_merged = np.zeros((len(render_frame_ids), camera_model.height, camera_model.width, 3), dtype=np.uint8)
         for minimap_wds_file in minimap_wds_files:
             minimap_data_wo_meta_info, minimap_name = simplify_minimap(minimap_wds_file)
 
-            # all static labels
+            # Filter minimap data by distance
+            filtered_minimap_data = []
+            for point in minimap_data_wo_meta_info:
+                # Calculate distance from camera to each point
+                distances = np.linalg.norm(point - camera_pose_initial_position, axis=1)
+                # Keep only points within distance threshold
+                mask = distances <= distance_threshold
+                if np.any(mask):
+                    filtered_minimap_data.append(point[mask])
+
+            # Create projection with filtered data
             minimap_projection = create_minimap_projection(
                 minimap_name,
-                minimap_data_wo_meta_info,
+                filtered_minimap_data,
                 pose_all_frames[render_frame_ids],
                 camera_model
             )
             minimaps_projection_merged = np.maximum(minimaps_projection_merged, minimap_projection)
 
-        # add bounding box projection to the minimap
+        # Filter and add bounding box projection to the minimap
+        filtered_object_info = {}
+        for frame_id in render_frame_ids:
+            frame_key = f"{frame_id:06d}.all_object_info.json"
+            if frame_key in all_object_info:
+                frame_objects = all_object_info[frame_key]
+                filtered_objects = {}
+                for obj, obj_information in frame_objects.items():
+                    # Extract object center from transformation matrix (last column, first 3 elements)
+                    obj_center = np.array(obj_information['object_to_world'])[:3, 3]
+                    # Calculate distance from camera to object center
+                    distance = np.linalg.norm(obj_center - camera_pose_initial_position)
+                    if distance <= distance_threshold:
+                        filtered_objects[obj] = obj_information
+                if filtered_objects:
+                    filtered_object_info[frame_key] = filtered_objects
+
         bounding_box_projection = create_bbox_projection(
-            all_object_info,
+            filtered_object_info,
             pose_all_frames,
             render_frame_ids,
             camera_model,

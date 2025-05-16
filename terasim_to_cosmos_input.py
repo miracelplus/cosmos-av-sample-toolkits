@@ -117,13 +117,13 @@ def get_streetview_image_and_description(collision_record_folder_path: Path):
         
 
 if __name__ == "__main__":
-    # veh_1_id, veh_2_id = get_streetview_image_and_description(collision_record_folder_path)
-    # convert_terasim_to_wds(
-    #     terasim_record_root=collision_record_folder_path,
-    #     output_wds_path=collision_record_folder_path / "wds",
-    #     single_camera=True,
-    #     av_id=veh_1_id
-    # )
+    veh_1_id, veh_2_id = get_streetview_image_and_description(collision_record_folder_path)
+    convert_terasim_to_wds(
+        terasim_record_root=collision_record_folder_path,
+        output_wds_path=collision_record_folder_path / "wds",
+        single_camera=True,
+        av_id=veh_2_id
+    )
     settings = json.load(open("config/dataset_waymo.json", "r"))
     render_sample_hdmap(
         input_root=collision_record_folder_path / "wds",
