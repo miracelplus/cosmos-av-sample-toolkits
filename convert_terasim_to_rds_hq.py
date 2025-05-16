@@ -84,6 +84,8 @@ class TeraSim_Dataset:
         # iterate all agents in the timestep
         for agent in timestep.findall('vehicle'):
             agent_id = agent.get('id')
+            if agent_id == self.av_id:
+                continue
             all_agent_bbox[agent_id] = self._get_agent_bbox(timestep, agent_id)
         return all_agent_bbox
     
@@ -146,6 +148,8 @@ class TeraSim_Dataset:
             [np.sin(heading_rad),  np.cos(heading_rad), 0],
             [0,                 0,                 1]
         ])
+
+        x, y, z = self.convert_sumo_to_waymo_bbox_center(x, y, z, sumo_angle, length, width, height)
 
         # Set translation (FLU: x = north, y = -east)
         translation = np.eye(4)
@@ -257,9 +261,38 @@ class TeraSim_Dataset:
         rear_y = y - rear_axle_offset * np.cos(heading_rad)
         
         # Set rear axle height (typical sedan rear axle height)
-        rear_z = z + 0.55  # meters
+        rear_z = z
         
         return rear_x, rear_y, rear_z
+    
+    def convert_sumo_to_waymo_bbox_center(self, x: float, y: float, z: float, sumo_angle: float, length: float, width: float, height: float) -> tuple:
+        """
+        Convert SUMO vehicle position (front bumper center) to Waymo position (rear axle center).
+        
+        Args:
+            x: SUMO x coordinate (front bumper center)
+            y: SUMO y coordinate (front bumper center)
+            z: SUMO z coordinate (ground height)
+            angle: Vehicle heading angle in degrees (SUMO convention: 0=north, 90=east)
+            length: Vehicle length in meters (default: 4.5m for typical sedan)
+            width: Vehicle width in meters (default: 2.0m for typical sedan)
+            height: Vehicle height in meters (default: 1.5m for typical sedan)
+
+        Returns:
+            tuple: (x, y, z) coordinates in Waymo convention (rear axle center)
+        """
+        # Calculate offset from front bumper to vehicle center
+        offset_x = length / 2
+        heading = (90 - sumo_angle) % 360
+        heading_rad = np.radians(heading)
+
+        # Calculate vehicle center position
+        center_x = x - offset_x * np.cos(heading_rad)
+        center_y = y + offset_x * np.sin(heading_rad)
+        center_z = z + height / 2
+
+        return center_x, center_y, center_z
+        
 
 WaymoProto2SemanticLabel = {
     label_pb2.Label.Type.TYPE_UNKNOWN: "Unknown",
