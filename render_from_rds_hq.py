@@ -28,7 +28,7 @@ from utils.camera.pinhole import PinholeCamera
 from utils.camera.ftheta import FThetaCamera
 from utils.ray_utils import ray_remote, wait_for_futures
 
-USE_RAY = True
+USE_RAY = False
 
 def get_low_fps_indices(high_indices, step=3):
     low_indices = []

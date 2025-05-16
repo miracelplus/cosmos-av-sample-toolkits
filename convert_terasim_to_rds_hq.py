@@ -24,19 +24,22 @@ class TeraSim_Dataset:
     Dataset class for TeraSim data that provides iteration over the last N timesteps.
     Implements similar interface as Waymo dataset for compatibility.
     """
-    def __init__(self, terasim_record_root: Union[str, Path], last_n_timesteps: int = 100):
+    def __init__(self, terasim_record_root: Union[str, Path], last_n_timesteps: int = 100, av_id: str = "CAV"):
         """
         Initialize the TeraSim dataset.
         
         Args:
             terasim_record_root: Path to the root directory containing TeraSim data
             last_n_timesteps: Number of last timesteps to keep (default: 100)
+            av_id: ID of the AV vehicle (default: "CAV")
         """
         self.clip_id = terasim_record_root.stem
         self.sumo_net_path = terasim_record_root / 'map.net.xml'
+        if not self.sumo_net_path.exists():
+            self.sumo_net_path = terasim_record_root.parent.parent / 'map.net.xml'
         self.sumo_net = sumolib.net.readNet(self.sumo_net_path, withInternal=True, withPedestrianConnections=True)
         self.fcd_path = terasim_record_root / 'fcd_all.xml'
-        self.av_id = "CAV"  # ID of the autonomous vehicle in the simulation
+        self.av_id = av_id
         
         # Parse XML data
         self.fcd_data = ET.parse(self.fcd_path).getroot()
@@ -113,7 +116,7 @@ class TeraSim_Dataset:
         # Extract position, orientation, and size
         x = float(agent.get('x'))
         y = float(agent.get('y'))
-        z = float(agent.get('z'))
+        z = float(agent.get('z', 0.0))
 
         # Get object type from agent tag and type attribute
         agent_tag = agent.tag  # 'vehicle' or 'person'
@@ -203,7 +206,7 @@ class TeraSim_Dataset:
         # Extract position and angle from XML
         x = float(vehicle.get('x'))
         y = float(vehicle.get('y'))
-        z = float(vehicle.get('z'))
+        z = float(vehicle.get('z', 0.0))
         sumo_angle = float(vehicle.get('angle'))  # Heading angle in degrees, SUMO: 0=north, 90=east
         length = float(vehicle.get('length', 4.5))  # Get vehicle length
         
@@ -339,47 +342,6 @@ def convert_terasim_intrinsics(output_root: Path, clip_id: str, dataset: tf.data
     sample[f'pinhole_intrinsic.{camera_name}.npy'] = np.array([fx, fy, cx, cy, w, h])
     write_to_tar(sample, output_root / 'pinhole_intrinsic' / f'{clip_id}.tar')
     return
-
-def get_crosswalk_and_driveway(net):
-    """
-    Extract crosswalk and driveway information from SUMO network.
-    
-    Args:
-        net: SUMO network object
-        
-    Returns:
-        dict: Dictionary containing crosswalk and driveway information
-    """
-    map_elements = {
-        'crosswalk': [],
-        'driveway': []
-    }
-    
-    # Get all junctions
-    junctions = net.getNodes()
-    
-    for junction in junctions:
-        junction_type = junction.getType()
-        
-        # Process crosswalks
-        if junction_type in ["traffic_light", "priority"]:
-            connections = junction.getConnections()
-            
-            for connection in connections:
-                if connection.getTLLinkIndex() >= 0:
-                    junction_shape = junction.getShape()
-                    crosswalk = [[point[0], point[1], 0] for point in junction_shape]
-                    map_elements['crosswalk'].append(crosswalk)
-        
-        # Process driveways
-        for edge in junction.getIncoming() + junction.getOutgoing():
-            edge_type = edge.getType()
-            if edge_type in ["residential", "living_street"]:
-                edge_shape = edge.getShape()
-                driveway = [[point[0], point[1], 0] for point in edge_shape]
-                map_elements['driveway'].append(driveway)
-    
-    return map_elements
 
 def convert_terasim_hdmap(output_root: Path, clip_id: str, dataset: TeraSim_Dataset):
     """
@@ -644,7 +606,8 @@ def convert_terasim_bbox(output_root: Path, clip_id: str, dataset: TeraSim_Datas
 def convert_terasim_to_wds(
     terasim_record_root: Union[str, Path],
     output_wds_path: Union[str, Path],
-    single_camera: bool = False
+    single_camera: bool = False,
+    av_id: str = "CAV"
 ):
     terasim_record_path = Path(terasim_record_root)
     clip_id = terasim_record_path.stem
@@ -653,7 +616,7 @@ def convert_terasim_to_wds(
     if not terasim_record_path.exists():
         raise FileNotFoundError(f"Terasim record file not found: {terasim_record_path}")
     
-    dataset = TeraSim_Dataset(terasim_record_root)
+    dataset = TeraSim_Dataset(terasim_record_root, av_id=av_id)
 
     convert_terasim_pose(output_wds_path, clip_id, dataset)
     convert_terasim_hdmap(output_wds_path, clip_id, dataset)
@@ -671,26 +634,6 @@ def main(terasim_record_root: str, output_wds_path: str, num_workers: int, singl
     print(f"Found {len(all_filenames)} TeraSim records")
     for filename in all_filenames:
         convert_terasim_to_wds(filename, output_wds_path, single_camera)
-    # with ProcessPoolExecutor(max_workers=num_workers) as executor:
-    #     futures = [
-    #         executor.submit(
-    #             convert_terasim_to_wds,
-    #             terasim_record_root=filename,
-    #             output_wds_path=output_wds_path,
-    #             single_camera=single_camera
-        #     ) 
-        #     for filename in all_filenames
-        # ]
-        
-        # for future in tqdm(
-        #     as_completed(futures), 
-        #     total=len(all_filenames),
-        #     desc="Converting tfrecords"
-        # ):
-        #     try:
-        #         future.result() 
-        #     except Exception as e:
-        #         print(f"Failed to convert due to error: {e}")
 
 if __name__ == "__main__":
     main()
