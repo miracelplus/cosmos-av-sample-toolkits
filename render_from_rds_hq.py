@@ -217,7 +217,7 @@ def render_sample_hdmap(
     resize_resolution: tuple[int, int] = (1280, 720),
     cosmos_resolution: tuple[int, int] = (1280, 704),
     resize_last: bool = False,
-    distance_threshold: float = 200.0,  # Maximum distance to render in meters
+    distance_threshold: float = 100.0,  # Maximum distance to render in meters
 ):
     """
     Render HD map projections with distance filtering.
@@ -462,8 +462,8 @@ def render_sample_rgb(
         )
             
 @click.command()
-@click.option("--input_root", '-i', type=str, help="the root folder of the input data", default="terasim_demo")
-@click.option("--output_root", '-o', type=str, help="the root folder of the output data", default="terasim_demo_render_ftheta")
+@click.option("--input_root", '-i', type=str, help="the root folder of the input data", default="terasim_demo_headon")
+@click.option("--output_root", '-o', type=str, help="the root folder of the output data", default="terasim_demo_headon_render_ftheta")
 @click.option("--dataset", "-d", type=str, default="waymo", help="the dataset name, 'rds_hq' or 'waymo' or 'waymo_mv', see xxx.json in config folder")
 @click.option("--camera_type", "-c", type=str, default="ftheta", help="the type of camera model, 'pinhole' or 'ftheta'")
 @click.option("--skip", "-s", multiple=True, help="can be 'hdmap' or 'lidar'")

@@ -36,7 +36,7 @@ class TeraSim_Dataset:
         self.clip_id = terasim_record_root.stem
         self.sumo_net_path = terasim_record_root / 'map.net.xml'
         if not self.sumo_net_path.exists():
-            self.sumo_net_path = terasim_record_root.parent.parent / 'map.net.xml'
+            self.sumo_net_path = terasim_record_root.parent / 'map.net.xml'
         self.sumo_net = sumolib.net.readNet(self.sumo_net_path, withInternal=True, withPedestrianConnections=True)
         self.fcd_path = terasim_record_root / 'fcd_all.xml'
         self.av_id = av_id
@@ -378,9 +378,12 @@ def convert_terasim_hdmap(output_root: Path, clip_id: str, dataset: TeraSim_Data
 
         hdmap_data = hdmap_content[hdmap_name]
         if hdmap_name_lower in hdmap_names_polyline:
-            hdmap_data = hdmap_data['polyline']
-            polyline = [[point['x'], point['y'], point['z']] for point in hdmap_data]
-            hdmap_name_to_data[hdmap_name_lower].append(polyline)
+            try:
+                hdmap_data = hdmap_data['polyline']
+                polyline = [[point['x'], point['y'], point['z']] for point in hdmap_data]
+                hdmap_name_to_data[hdmap_name_lower].append(polyline)
+            except:
+                print(f"Unkown hdmap item name: {hdmap_name}, skip this item")
         elif hdmap_name_lower in hdmap_names_polygon:
             hdmap_data = hdmap_data['polygon']
             polygon = [[point['x'], point['y'], point['z']] for point in hdmap_data]
@@ -625,15 +628,16 @@ def convert_terasim_to_wds(
     
 
 @click.command()
-@click.option("--terasim_record_root", "-i", type=str, help="Terasim record root", default="/home/mtl/cosmos-av-sample-toolkits/terasim_mcity_dataset")
-@click.option("--output_wds_path", "-o", type=str, help="Output wds path", default="/home/mtl/cosmos-av-sample-toolkits/terasim_demo")
+@click.option("--terasim_record_root", "-i", type=str, help="Terasim record root", default="terasim_mcity_dataset")
+@click.option("--output_wds_path", "-o", type=str, help="Output wds path", default="/home/mtl/cosmos-av-sample-toolkits/terasim_demo_headon")
 @click.option("--num_workers", "-n", type=int, default=1, help="Number of workers")
 @click.option("--single_camera", "-s", type=bool, default=False, help="Convert only front camera")
 def main(terasim_record_root: str, output_wds_path: str, num_workers: int, single_camera: bool):
     all_filenames = list(Path(terasim_record_root).iterdir())
     print(f"Found {len(all_filenames)} TeraSim records")
     for filename in all_filenames:
-        convert_terasim_to_wds(filename, output_wds_path, single_camera)
+        if filename.stem.startswith("001001_headon"):
+            convert_terasim_to_wds(filename, output_wds_path, single_camera, av_id="BV_3.20")
 
 if __name__ == "__main__":
     main()

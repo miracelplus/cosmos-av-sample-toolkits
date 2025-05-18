@@ -13,3 +13,5 @@ waymo_demo*
 test.mp4
 TeraSim-Data-Zoo/
 terasim_mcity_dataset/
+terasim_demo_headon/
+terasim_demo_headon_render_ftheta/
