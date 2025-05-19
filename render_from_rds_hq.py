@@ -217,7 +217,7 @@ def render_sample_hdmap(
     resize_resolution: tuple[int, int] = (1280, 720),
     cosmos_resolution: tuple[int, int] = (1280, 704),
     resize_last: bool = False,
-    distance_threshold: float = 100.0,  # Maximum distance to render in meters
+    distance_threshold: float = 200.0,  # Maximum distance to render in meters
 ):
     """
     Render HD map projections with distance filtering.

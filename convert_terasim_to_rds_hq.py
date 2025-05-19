@@ -36,7 +36,7 @@ class TeraSim_Dataset:
         self.clip_id = terasim_record_root.stem
         self.sumo_net_path = terasim_record_root / 'map.net.xml'
         if not self.sumo_net_path.exists():
-            self.sumo_net_path = terasim_record_root.parent / 'map.net.xml'
+            self.sumo_net_path = terasim_record_root.parent.parent / 'map.net.xml'
         self.sumo_net = sumolib.net.readNet(self.sumo_net_path, withInternal=True, withPedestrianConnections=True)
         self.fcd_path = terasim_record_root / 'fcd_all.xml'
         self.av_id = av_id
@@ -260,12 +260,12 @@ class TeraSim_Dataset:
         # Calculate offset from front bumper to rear axle
         # Typical sedan: wheelbase ~2.7m, front overhang ~0.9m
         # So rear axle is about (length/2 - front_overhang) meters behind front bumper
-        front_overhang = 0.9  # meters
-        rear_axle_offset = length/2 - front_overhang
+        # front_overhang = 0.9  # meters
+        rear_axle_offset = 0.75 * length
         
         # Calculate rear axle position
-        rear_x = x - rear_axle_offset * np.sin(heading_rad)
-        rear_y = y - rear_axle_offset * np.cos(heading_rad)
+        rear_x = x - rear_axle_offset * np.cos(heading_rad)
+        rear_y = y - rear_axle_offset * np.sin(heading_rad)
         
         # Set rear axle height (typical sedan rear axle height)
         rear_z = z
@@ -295,7 +295,7 @@ class TeraSim_Dataset:
 
         # Calculate vehicle center position
         center_x = x - offset_x * np.cos(heading_rad)
-        center_y = y + offset_x * np.sin(heading_rad)
+        center_y = y - offset_x * np.sin(heading_rad)
         center_z = z + height / 2
 
         return center_x, center_y, center_z
@@ -477,7 +477,7 @@ def convert_terasim_pose(output_root: Path, clip_id: str, dataset: TeraSim_Datas
         "front": np.array([
             [ 0.99999432, -0.00276256,  0.00193296,  1.53863471],
             [ 0.00274548,  0.99995762,  0.00878713, -0.02439434],
-            [-1.95715769e-03, -8.78177324e-03, 9.99959524e-01, 2.11509408e+00],
+            [-1.95715769e-03, -8.78177324e-03, 9.99959524e-01, 1.5],
             [0., 0., 0., 1.]
         ])}
     camera_to_vehicle = camera_name_to_camera_to_vehicle["front"]

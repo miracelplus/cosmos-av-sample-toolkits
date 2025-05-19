@@ -52,8 +52,8 @@ def analyze_image_with_llm(image_data_list):
     content = [
         {
             "type": "text", 
-            "text": "Please provide a detailed, description of the permanent environment and visual style as seen in this sequence of street view images. These images are captured from a moving vehicles perspective at different points along a real-world route, similar to a virtual drive-through using Google Street View. Focus exclusively on the fixed background elements such as road layout (including straight roads, roundabouts, intersections, crossings, merging lanes), sidewalks, bicycle lanes, types of buildings or architecture, vegetation, and the overall atmosphere of the area. Describe how the environment changes as the vehicle moves along the route, noting transitions between different types of roads or urban features (for example, moving from a straight road to a roundabout, or from a residential area to a commercial zone). Ignore all temporary or moving elements such as vehicles, pedestrians, weather, or construction work. Make sure to mention any changes in perspective or viewing angle between the images, and describe the spatial relationships between key features (e.g., “a bicycle lane appears on the right,” “the road curves gently to the left,” “a row of houses lines the street on one side,” “a roundabout comes into view ahead,” etc.). Your description should read as a smooth, chronological narrative that captures the permanent visual style and setting across the entire sequence, making it easy for a video generation model to recreate the scene. Do not list the images separately; instead, weave the observations into a single, cohesive story."
-        }
+            "text": "Please describe the environment and setting of this street view image. Focus on static elements like buildings, roads, vegetation, weather conditions, and overall atmosphere. Ignore any moving objects or people. This description will be used as a prompt for video generation."
+        },
     ]
     
     # Add each image to the content
@@ -114,7 +114,7 @@ def get_streetview_image_and_description(collision_record_folder_path: Path):
     veh_1_obs = collision_record["veh_1_obs"]
     veh_2_obs = collision_record["veh_2_obs"]
 
-    vehicle_position_angle_list = get_vehicle_position_view(fcd_path, veh_1_id, 40) # get 5s (50 timesteps) before crash
+    vehicle_position_angle_list = get_vehicle_position_view(fcd_path, veh_1_id, 40, 40) # get 5s (50 timesteps) before crash
     # veh_2_x, veh_2_y, veh_2_angle = get_vehicle_position_view(fcd_path, veh_2_id, veh_2_obs["ego"]["timestep"])
 
     vehicle_lon_lat_angle_list = []
